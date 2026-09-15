@@ -7,6 +7,7 @@
     denoiseraw train    --data clean_raws/       # train a model
     denoiseraw finetune IMG.CR2 --checkpoint ... # adapt to your camera, no GT
     denoiseraw bench    IMG.CR2                  # compare methods on one file
+    denoiseraw gui                               # point-and-click web interface
 """
 
 from __future__ import annotations
@@ -314,6 +315,22 @@ def cmd_bench(args) -> int:
 
 
 # --------------------------------------------------------------------------
+# gui
+# --------------------------------------------------------------------------
+def cmd_gui(args) -> int:
+    try:
+        from .gui import build_interface
+    except ImportError:
+        print("The GUI needs gradio. Install it with `pip install -e \".[gui]\"` "
+              "or `pip install gradio`.", file=sys.stderr)
+        return 1
+
+    demo = build_interface()
+    demo.queue().launch(server_name=args.host, server_port=args.port, share=args.share)
+    return 0
+
+
+# --------------------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="denoiseraw", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -408,6 +425,12 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--b", type=float, default=1.6e-5, help="read-noise variance")
     b.add_argument("--row", type=float, default=1e-3, help="row-noise sigma")
     b.set_defaults(func=cmd_bench)
+
+    g = sub.add_parser("gui", help="launch the point-and-click web interface")
+    g.add_argument("--host", default="127.0.0.1")
+    g.add_argument("--port", type=int, default=None)
+    g.add_argument("--share", action="store_true", help="create a public share link")
+    g.set_defaults(func=cmd_gui)
 
     return p
 

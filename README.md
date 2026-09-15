@@ -138,6 +138,35 @@ denoiseraw bench IMG.CR2 --checkpoint runs/nafnet/best.ckpt
 
 ---
 
+## GUI(ターミナル不要)
+
+コマンドラインを使わずに、RAWファイルを複数選んで設定をいじり、ボタン一つで実行できるブラウザ画面。
+
+```bash
+pip install -e ".[gui]"
+denoiseraw gui
+```
+
+`http://127.0.0.1:7860` が自動的にブラウザで開く。ローカルで実行しているので、ファイル選択はOS標準のダイアログ(複数選択・ドラッグ&ドロップ対応)になる。
+
+![DeNoiseRawのGUI](docs/images/gui_screenshot.png)
+
+**できること:**
+
+- RAWファイルを複数選んで一括処理
+- 処理方式(自動/古典手法/学習済みモデル)、バックエンド、強さ、出力形式をGUI上で設定
+- 「実行」ボタンでノイズ除去を開始、進捗と1件ごとの結果(ノイズ低減dB)を表示
+- 完了後、各ファイルの処理前後プレビュー画像をその場で見比べ、結果ファイルをブラウザから直接ダウンロード(保存)
+- 「詳細設定」を開けば、キャリブレーション済みプロファイルJSONの指定、ISO指定、self-ensemble、タイルサイズ、デモザイク方式なども調整可能
+
+処理結果の例(実際のCanon 5D Mark II / Nikon D3S、ISO3200のRAWファイルで検証済み):
+
+![実行結果の例](docs/images/gui_screenshot_result.png)
+
+学習済みモデルの.ckptファイルが無くても「古典手法」を選べばすぐに動く。ネットワーク越しにアクセスさせたい場合(自分以外の端末や、リモート環境から使う場合)は `denoiseraw gui --host 0.0.0.0` や `--share`(Gradioの一時公開リンクを発行)を使う。
+
+---
+
 ## Python API
 
 ```python
@@ -176,7 +205,8 @@ denoiseraw/
 ├── data/           合成データセットとペアデータセット
 ├── vst.py          一般化Anscombe変換(NumPyとTorch両対応)
 ├── metrics.py      PSNR、SSIM、ディテール保持率、残存ノイズ
-└── pipeline.py     全体を結ぶエンドツーエンド処理
+├── pipeline.py     全体を結ぶエンドツーエンド処理
+└── gui.py          ブラウザで動くGUI(Gradio、任意インストール)
 ```
 
 間違えやすく、丁寧に扱っている点が2つある:

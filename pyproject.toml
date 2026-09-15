@@ -22,6 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 torch = ["torch>=2.0"]
+gui = ["gradio>=4.0"]
 dev = ["pytest>=7.0", "ruff>=0.1"]
 
 [project.scripts]
