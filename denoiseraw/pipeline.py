@@ -173,17 +173,18 @@ def denoise_raw(img: RawImage, settings: Optional[DenoiseSettings] = None,
         denoised = denoise_packed_array(img.data[None], profile, settings)
         out = img.replaced(denoised[0])
 
-    from .metrics import residual_noise_level
+    from .metrics import paired_noise_reduction
 
-    metrics = {
-        "residual_noise_before": residual_noise_level(
-            pack_bayer(img.data, img.pattern) if img.is_bayer else img.data[None]),
-        "residual_noise_after": residual_noise_level(
-            pack_bayer(out.data, out.pattern) if out.is_bayer else out.data[None]),
-    }
-    if metrics["residual_noise_after"] > 0:
-        metrics["noise_reduction_db"] = float(
-            20.0 * np.log10(metrics["residual_noise_before"] / metrics["residual_noise_after"]))
+    # paired_noise_reduction (not two independent residual_noise_level calls):
+    # an aggressive denoiser can flatten part of the image to near-zero
+    # variance, and scoring before/after independently lets the *after* image
+    # nominate those over-smoothed patches as its own best evidence, reporting
+    # a reduction of tens of dB an image plainly does not show. Anchoring the
+    # flat-block selection to the noisy input alone avoids that.
+    metrics = paired_noise_reduction(
+        pack_bayer(img.data, img.pattern) if img.is_bayer else img.data[None],
+        pack_bayer(out.data, out.pattern) if out.is_bayer else out.data[None],
+    )
 
     return DenoiseResult(raw=out, profile=profile, method=choose_method(settings),
                          elapsed=time.time() - start, metrics=metrics)

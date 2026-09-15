@@ -251,6 +251,43 @@ of what trained models are worth:
 | Restormer | 26.1 M | 40.02 dB |
 | NAFNet-width64 | 116 M | 40.30 dB |
 
+### Tested against real camera files
+
+Genuine CR2/NEF captures (Canon EOS 5D Mark II at ISO 3200 f/1.2, Nikon D3S at
+ISO 3200 f/1.4 — sourced from rawpy's public test fixtures, not synthetic), run
+through the classical (BM3D-under-VST / wavelet) path with no trained weights:
+
+| File | Backend | Time | Noise reduction* |
+|---|---|---:|---:|
+| 5D Mark II, 5634×3752 | wavelet | 5.9 s | 33.7 dB |
+| 5D Mark II, 5634×3752 | bm3d | 5m18s | 31.7 dB |
+| D3S, 4284×2844 | wavelet | 3.7 s | 26.5 dB |
+
+\*Measured on matched flat-scene blocks selected from the *noisy* input only
+(`paired_noise_reduction`), not independently from each image — see the note
+below on why that distinction matters. No ground truth exists for a real
+photograph, so this is the best available proxy, not a PSNR.
+
+**A number this large deserved scrutiny before being written down.** An
+earlier version of this metric selected each image's "flattest" blocks
+*independently*; on a real photo that lets an over-smoothed, texture-destroyed
+region in the output masquerade as evidence of noise removal it never
+performed elsewhere. Verifying it required checking three separate things: an
+independent high-pass measurement on hand-picked patches (agreed, ~99% noise
+variance removed even in a textured road patch — the earlier concern that this
+was "too good" turned out to conflate real low-frequency scene structure with
+actual per-pixel noise, which a naive raw-patch standard deviation cannot tell
+apart); a constructed adversarial case that *does* fool the independent-
+selection method (65.7 dB reported for zero real improvement) to confirm the
+failure mode is real; and only then confirming that this particular photo's
+number holds up under the corrected, pairwise measurement (33.65 dB vs the
+original 33.6 dB — it wasn't, in fact, what was fooling the metric here). Both
+the fix and the adversarial regression test are in `tests/test_pipeline.py`.
+What the large dB figure does *not* establish is whether fine real texture
+(gravel-scale detail in the road, for instance) survived alongside the noise —
+that needs a clean reference this photo doesn't have, so treat it as unverified
+rather than assume it's fine.
+
 **No pre-trained weights ship with this repository.** The classical path runs
 out of the box; the network path needs you to train or supply a checkpoint, and
 `--method model` fails loudly rather than quietly returning an untrained
@@ -260,6 +297,12 @@ network's output.
 
 ## Honest limitations
 
+- **Canon sRAW/mRAW modes are not supported and crash.** These modes have the
+  camera do partial demosaicing in hardware, so `raw_image_visible` comes back
+  as an already-multi-channel `(H, W, N)` array instead of a 2-D mosaic, which
+  nothing downstream expects. Found by testing against a real Canon 40D sRAW
+  file; full-resolution RAW (CR2/CR3/NEF/ARW/...) from the same bodies works
+  normally. Shoot full-resolution RAW if your camera offers a choice.
 - **X-Trans and Quad-Bayer** sensors fall back to single-plane processing.
   Correct, but it forfeits the colour-consistency advantage of packing, so
   expect less from Fujifilm files.

@@ -174,3 +174,36 @@ def test_channel_mismatch_gives_a_useful_error(tmp_path):
     with pytest.raises(ValueError, match="trained for 4-channel data"):
         denoise_raw(img, DenoiseSettings(method="model", checkpoint=checkpoint,
                                          progress=False))
+
+
+def test_paired_noise_reduction_resists_destroyed_region_artifacts():
+    """Regression: independently picking each image's own flattest blocks lets
+    a denoiser that destroys texture into near-flatness elsewhere get credited
+    as if it had cleaned up the genuinely flat region, which is not what
+    happened. Anchoring the flat-block selection to the noisy input alone must
+    report the true (lack of) improvement in that region instead."""
+    from denoiseraw.metrics import paired_noise_reduction, residual_noise_level
+
+    rng = np.random.default_rng(0)
+    h, w = 96, 96
+    flat_scene = np.full((h, w), 0.3, np.float32)
+    yy, xx = np.mgrid[0:h, 0:w]
+    textured_scene = (0.3 + 0.25 * np.sin(xx / 2.2) * np.cos(yy / 2.7)).astype(np.float32)
+    sigma = 0.02
+    before = np.stack([np.concatenate([flat_scene, textured_scene], axis=1)
+                       + rng.normal(0, sigma, (h, w * 2)).astype(np.float32)])
+
+    after = before.copy()
+    # The "denoiser" leaves the truly flat half untouched (no real improvement)
+    # but destroys the textured half into near-flatness (texture, not noise).
+    after[0, :, w:] = 0.3 + rng.normal(0, 1e-5, (h, w)).astype(np.float32)
+
+    old_before, old_after = residual_noise_level(before), residual_noise_level(after)
+    old_db = 20 * np.log10(old_before / max(old_after, 1e-12))
+    assert old_db > 20, "the independent-selection method should be fooled here"
+
+    paired = paired_noise_reduction(before, after)
+    assert paired["noise_reduction_db"] == pytest.approx(0.0, abs=1.0), (
+        "the paired method must report that the genuinely flat region saw no "
+        "real improvement, instead of crediting the destroyed texture region"
+    )
