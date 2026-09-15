@@ -1,12 +1,8 @@
 # DeNoiseRaw
 
-Noise reduction for DSLR and mirrorless RAW files, built on the physics of how
-sensors actually make noise.
+DSLR・ミラーレスカメラのRAWファイル向けノイズ除去ツール。センサーが実際にどうノイズを生むか、その物理法則に基づいて作られている。
 
-It works on the mosaic, before demosaicing, and it models the noise rather than
-guessing at it: photon shot noise, heavy-tailed read noise, row banding and
-quantisation, calibrated to your camera. The result goes back out as a linear
-DNG you finish in Lightroom, Capture One or darktable.
+Bayerモザイク(デモザイク前)の段階で処理し、ノイズを勝手に推測するのではなく物理モデルとして扱う: 光子ショットノイズ、裾の重い読み出しノイズ、行バンディング、量子化ノイズ——これらをカメラごとにキャリブレーションする。結果はLightroom・Capture One・darktableで仕上げられる線形DNGとして出力される。
 
 ```bash
 pip install -e .
@@ -14,109 +10,88 @@ pip install -e .
 denoiseraw denoise IMG_1234.CR2 -o IMG_1234_denoised.dng
 ```
 
-That works immediately, with no model weights and no GPU. Train a network when
-you want the last few dB.
+これだけで、学習済みモデルもGPUも無しにすぐ動く。あと数dB欲しくなったらネットワークを学習させればよい。
 
 ---
 
-## Why not just use the denoiser in my raw converter?
+## なぜ現像ソフト内蔵のノイズ除去ではダメなのか
 
-Most of them denoise *after* demosaicing, often after the tone curve. By then
-the noise is spatially correlated (demosaicing mixes neighbours), channel
-correlated (the colour matrix mixes channels) and non-linearly transformed — so
-there is no longer a model that describes it, and the denoiser is reduced to
-generic smoothing.
+多くの現像ソフトは、デモザイク後——たいていはトーンカーブを通した後——にノイズ除去をかける。その時点でノイズは、空間的に相関し(デモザイクが隣接画素を混ぜる)、チャンネル間で相関し(カラーマトリックスがチャンネルを混ぜる)、非線形変換を受けている。もはやそれを説明できるモデルは存在せず、ノイズ除去は「一般的な平滑化」に成り下がる。
 
-In RAW, before any of that, noise is spatially independent and follows a
-two-parameter law you can measure:
+RAWの段階、まだ何も処理されていない状態でなら、ノイズは空間的に独立していて、測定可能な2パラメータの法則に従う:
 
 ```
 Var(x) = a·x + b
 ```
 
-`a` is photon shot noise, `b` is everything signal-independent. Knowing those
-two numbers turns denoising from guesswork into estimation — the denoiser is
-told exactly how uncertain every pixel is, instead of inferring it from texture
-and getting it wrong on both smooth skies and fine foliage.
+`a` は光子ショットノイズ、`b` は信号に依存しないすべての要因。この2つの数値さえ分かれば、ノイズ除去は「当てずっぽう」から「推定」に変わる——デノイザーは各画素がどれだけ不確かなのかを正確に教えられる。テクスチャから推測して、滑らかな空も細かい葉も両方外す、ということがなくなる。
 
 ---
 
-## What it does
+## できること
 
-**Physics-based noise model.** The full ELD formulation (Wei et al., CVPR 2020):
-Poisson shot noise, Tukey-lambda read noise, per-row banding and quantisation.
-The heavy tails and the banding are what separate a denoiser that survives deep
-shadows from one that does not.
+**物理ベースのノイズモデル。** ELDの定式化(Wei et al., CVPR 2020)を完全実装: ポアソンショットノイズ、Tukey-lambda読み出しノイズ、行ごとのバンディング、量子化ノイズ。裾の重さとバンディングこそが、深い影で生き残るデノイザーとそうでないものを分ける。
 
-**Noise parameters from your camera, three ways.**
-1. *Calibrated* — shoot lens-cap frames and a flat-field ramp once; exact.
-2. *Blind* — fitted from the photograph itself, Foi et al. (TIP 2008). Within a
-   few percent on ordinary scenes.
-3. *Given* — pass a profile JSON.
+**ノイズパラメータの入手方法は3通り。**
+1. *キャリブレーション* — レンズキャップを閉じたフレームとフラットフィールドの段階露出を一度撮っておけば正確な値が得られる。
+2. *ブラインド推定* — 写真そのものから推定する(Foi et al., TIP 2008)。普通のシーンなら数%の誤差に収まる。
+3. *指定* — プロファイルJSONを渡す。
 
-**Networks.** Faithful implementations of NAFNet (ECCV 2022) and Restormer
-(CVPR 2022), plus a separable-convolution U-Net for CPU work. Parameter counts
-are asserted against the published configurations in the test suite, so they
-cannot silently drift from the papers.
+**ネットワーク。** NAFNet(ECCV 2022)とRestormer(CVPR 2022)を忠実に実装。加えてCPU向けの分離畳み込みU-Net。パラメータ数はテストスイート内で論文の構成と一致するよう検証されており、実装が論文からこっそりずれることがない。
 
-**Per-pixel noise conditioning.** The network receives `sqrt(a·x + b)` as extra
-input planes, so one model covers every ISO instead of one model per ISO.
+**画素ごとのノイズ条件付け。** ネットワークは `sqrt(a·x + b)` を追加の入力平面として受け取るので、ISOごとにモデルを用意する必要がなく、1つのモデルで全ISOをカバーできる。
 
-**Works without training.** BM3D under a variance-stabilising transform, with
-the closed-form unbiased inverse (Mäkitalo & Foi, TIP 2011).
+**学習なしでも動く。** 分散安定化変換の下でBM3Dを実行し、閉形式の不偏逆変換(Mäkitalo & Foi, TIP 2011)を使う。
 
-**Adapts to your sensor without clean data.** `denoiseraw finetune` uses
-Neighbor2Neighbor (CVPR 2021) to fine-tune on your own noisy files.
+**手持ちのセンサーに教師データなしで適応。** `denoiseraw finetune` はNeighbor2Neighbor(CVPR 2021)を使い、手持ちのノイズ写真だけでファインチューニングする。
 
-**Linear DNG output.** Pixel-exact, opens in any raw converter, keeps your
-processing decisions for later.
+**線形DNG出力。** 画素単位で完全一致し、どのRAW現像ソフトでも開け、あとで自分の現像判断を下せる。
 
-Full reasoning and citations: [`docs/PAPERS.md`](docs/PAPERS.md).
+詳しい理由と参考文献: [`docs/PAPERS.md`](docs/PAPERS.md)。
 
 ---
 
-## Usage
+## 使い方
 
-### Denoise
+### ノイズ除去
 
 ```bash
-# One file. Method 'auto' uses a model if you point it at weights, else classical.
+# 1ファイルだけ処理。method='auto' は学習済み重みを指定すればモデルを、
+# 無ければ古典手法(classical)を自動的に使う。
 denoiseraw denoise IMG_1234.CR2 -o out.dng
 
-# A whole shoot
+# 撮影分まとめて
 denoiseraw denoise ~/shoot/*.NEF -o ~/shoot/denoised/
 
-# With a trained model, tiled for a 45 MP file, plus 8x self-ensembling
+# 学習済みモデルを使い、4500万画素ファイルをタイル分割しつつ、
+# さらに8方向のself-ensembleで精度を上げる
 denoiseraw denoise IMG.ARW -o out.dng \
     --checkpoint runs/nafnet/best.ckpt --tile 512 --self-ensemble
 
-# Gentler: keep more grain and fine detail
+# 控えめに: 粒状感や微細なディテールを多めに残す
 denoiseraw denoise IMG.CR3 -o out.dng --strength 0.6
 
-# A viewable preview instead of a DNG
+# DNGではなく、見るためのプレビュー画像として出力
 denoiseraw denoise IMG.CR2 -o preview.jpg --auto-bright
 ```
 
-`--strength` works by over- or understating sigma to the conditioned model, so
-it is a real change in how much noise the model thinks is there, not a blend
-with the original.
+`--strength` は、条件付けモデルに渡すシグマ(ノイズレベル)を実際より大きく/小さく申告することで動作する。つまり「元画像とのブレンド」ではなく、モデルが認識するノイズ量そのものを本当に変えている。
 
-### Inspect
+### 中身を確認する
 
 ```bash
-denoiseraw info IMG_1234.CR2        # camera, CFA, black/white levels, ISO
-denoiseraw estimate IMG_1234.CR2    # blind noise estimate for this frame
+denoiseraw info IMG_1234.CR2        # カメラ機種、CFAパターン、黒/白レベル、ISO
+denoiseraw estimate IMG_1234.CR2    # このフレームのブラインドノイズ推定
 ```
 
-### Calibrate your camera (once per body)
+### カメラをキャリブレーションする(機種ごとに一度でよい)
 
-Worth ten minutes. Measured parameters do not care what the scene looks like,
-which is exactly where blind estimation is weakest.
+10分の価値はある。測定したパラメータはシーンの見た目に左右されない——これはブラインド推定が最も弱い点そのものだ。
 
 ```bash
-# Bias frames: lens cap on, fastest shutter, at the ISO you care about.
-# Flat frames: an evenly lit blank wall, defocused, bracketed from near-black
-#              to near-clipping, TWO frames at each level.
+# バイアスフレーム: レンズキャップを閉じ、最速シャッターで、気になるISOにて撮影。
+# フラットフレーム: 均一に照らした無地の壁をピンボケで、
+#                    ほぼ黒からほぼ白飛びまで段階露出し、各段階で2枚ずつ撮る。
 denoiseraw calibrate \
     --bias bias/*.CR2 \
     --flat flat/*.CR2 \
@@ -126,28 +101,26 @@ denoiseraw calibrate \
 denoiseraw denoise IMG.CR2 -o out.dng --profile profiles/5d4_iso3200.json
 ```
 
-Bias frames alone give you the read-noise floor, the banding level and the
-read-noise shape. Flats add the shot-noise slope.
+バイアスフレームだけでも、読み出しノイズの下限・バンディングの量・読み出しノイズの分布形状が得られる。フラットフレームを加えるとショットノイズの傾き(a)も分かる。
 
-### Train
+### 学習させる
 
 ```bash
-# Point it at clean, low-ISO, well-exposed RAW files. Noise is synthesised
-# on the fly from the calibrated model, resampled every epoch.
+# 低ISOできれいに露出の合ったRAWファイル群を指定する。ノイズはキャリブレー
+# ション済みモデルからその場で合成され、エポックごとに引き直される。
 denoiseraw train --data ~/raw/clean/ --preset nafnet \
     --profile profiles/5d4_iso3200.json \
     --epochs 200 --batch-size 16 --patch-size 256 \
     --out-dir runs/nafnet
 
-# Real paired data (SIDD, or your own tripod pairs)
+# 実際のペアデータ(SIDD、または自分で三脚固定して撮ったペア)を使う場合
 denoiseraw train --paired-noisy sidd/noisy/ --paired-clean sidd/clean/ \
     --preset nafnet --out-dir runs/nafnet-ft
 ```
 
-Presets: `lite`, `nafnet-small`, `nafnet`, `nafnet-large`, `restormer-small`,
-`restormer`. Ready-made recipes are in [`configs/`](configs/).
+プリセット: `lite`、`nafnet-small`、`nafnet`、`nafnet-large`、`restormer-small`、`restormer`。すぐ使えるレシピは [`configs/`](configs/) にある。
 
-### Fine-tune to your camera, no ground truth needed
+### 教師データなしで自分のカメラに合わせてファインチューニングする
 
 ```bash
 denoiseraw finetune ~/shoot/*.CR2 \
@@ -155,14 +128,13 @@ denoiseraw finetune ~/shoot/*.CR2 \
     --steps 2000 -o my_5d4.ckpt
 ```
 
-### Compare methods on your own file
+### 自分のファイルで手法を比較する
 
 ```bash
 denoiseraw bench IMG.CR2 --checkpoint runs/nafnet/best.ckpt
 ```
 
-Re-noises a crop of your own image with a known profile, so PSNR, SSIM and a
-detail-preservation ratio are all measurable against real ground truth.
+自分の画像の一部を、既知のノイズプロファイルで再度ノイズ付加する。これにより本物の正解画像に対してPSNR・SSIM・ディテール保持率を測定できる。
 
 ---
 
@@ -177,173 +149,112 @@ result = denoise_file("IMG_1234.CR2", DenoiseSettings(
     self_ensemble=True,
 ))
 
-print(result.profile)                       # the noise model that was used
+print(result.profile)                       # 使用されたノイズモデル
 print(result.metrics["noise_reduction_db"])
 write_outputs(result, "out.dng")
 ```
 
 ---
 
-## How it is put together
+## 構成
 
 ```
 denoiseraw/
-├── rawio/          RAW in, developed or linear DNG out
-│   ├── loader.py       libraw -> normalised linear RawImage
-│   ├── packing.py      Bayer mosaic <-> 4 colour-consistent planes
-│   ├── develop.py      Malvar demosaic, white balance, colour matrix, sRGB
-│   └── writer.py       DNG / linear CFA TIFF / preview images
-├── noise/          the scientific core
-│   ├── profile.py      Var = a·x + b, per-ISO banks
-│   ├── synth.py        ELD noise synthesis for training
-│   ├── estimate.py     blind estimation from one frame
-│   └── calibrate.py    bias / flat-field calibration
-├── models/         NAFNet, Restormer, a lite U-Net, and noise conditioning
-├── engine/         tiled inference, training, Neighbor2Neighbor, D4 geometry
-├── classical/      BM3D under a variance-stabilising transform
-├── data/           synthetic and paired datasets
-├── vst.py          generalised Anscombe transform (NumPy and Torch)
-├── metrics.py      PSNR, SSIM, detail preservation, residual noise
-└── pipeline.py     the whole thing, end to end
+├── rawio/          RAW入力、現像またはリニアDNG出力
+│   ├── loader.py       libraw -> 正規化された線形RawImage
+│   ├── packing.py      Bayerモザイク <-> 色が揃った4枚の平面
+│   ├── develop.py      Malvarデモザイク、ホワイトバランス、カラーマトリクス、sRGB
+│   └── writer.py       DNG / 線形CFA TIFF / プレビュー画像
+├── noise/          科学的な核となる部分
+│   ├── profile.py      Var = a·x + b、ISOごとのバンク
+│   ├── synth.py        学習用のELDノイズ合成
+│   ├── estimate.py     1枚の画像からのブラインド推定
+│   └── calibrate.py    バイアス/フラットフィールドによるキャリブレーション
+├── models/         NAFNet、Restormer、軽量U-Net、ノイズ条件付け
+├── engine/         タイル推論、学習、Neighbor2Neighbor、D4幾何変換
+├── classical/      分散安定化変換下でのBM3D
+├── data/           合成データセットとペアデータセット
+├── vst.py          一般化Anscombe変換(NumPyとTorch両対応)
+├── metrics.py      PSNR、SSIM、ディテール保持率、残存ノイズ
+└── pipeline.py     全体を結ぶエンドツーエンド処理
 ```
 
-Two details that are easy to get wrong and are handled carefully:
+間違えやすく、丁寧に扱っている点が2つある:
 
-**Row noise must follow physical sensor rows.** In packed Bayer, the R and G1
-planes come from the *same* sensor row and must share the banding offset; G2 and
-B come from the next one. Getting this wrong turns coherent banding into
-incoherent per-plane noise, and the model never learns to remove the real thing.
+**行ノイズは物理的なセンサー行に沿っていなければならない。** パックされたBayerでは、RプレーンとG1プレーンは*同じ*センサー行に由来するため、バンディングのオフセットを共有しなければならない(G2とBは次の行に由来する)。ここを間違えると、本来一貫しているはずのバンディングがプレーンごとにバラバラなノイズになってしまい、モデルは本物のバンディングを除去することを学習できなくなる。
 
-**Flipping packed Bayer permutes the colour planes.** Mirroring an RGGB mosaic
-horizontally makes it read GRBG, so in packed terms R and G1 swap planes on top
-of the spatial flip. Ignore that and self-ensembling averages eight mutually
-inconsistent estimates, quietly making the output *worse*. `engine/geometry.py`
-handles it, and `tests/test_geometry.py` checks it against the mosaic ground
-truth.
+**パックされたBayerを反転すると色プレーンが入れ替わる。** RGGBモザイクを水平反転するとGRBGとして読めるようになるため、パックされた状態ではR/G1プレーンが空間反転に加えてプレーンごと入れ替わる。これを無視すると、self-ensembleは互いに矛盾する8つの推定値を平均することになり、静かに出力が*悪化*する。`engine/geometry.py` がこれを処理しており、`tests/test_geometry.py` でモザイクの正解と突き合わせて検証している。
 
 ---
 
-## Measured behaviour
+## 実測した性能
 
-From the test suite, on synthetic captures with a known profile:
+既知のプロファイルを持つ合成撮影データでのテストスイートの結果:
 
-| Property | Result |
+| 項目 | 結果 |
 |---|---|
-| Noise synthesis | reproduces `Var = a·x + b` to within 6% at every level, all three models |
-| Calibration (bias + flats) | recovers `a` to 0.5%, `b` to 6%, banding to 4% |
-| Blind estimation | sigma at 10% grey within ~15%, biased slightly high (safe direction) |
-| VST | holds noise sigma at 1.00 across three decades of signal |
-| Unbiased GAT inverse | ~15× less bias than the algebraic inverse |
-| Malvar demosaic | +3.8 dB over bilinear on real content; exact on constant and linear ramps |
-| Tiled inference | no step discontinuity at tile boundaries for overlap ≥ 16 |
-| DNG export | pixel-exact round trip through libraw; colour matrix honoured |
-| Training | a small model gains +2.6 dB over the noisy input in a 3-minute CPU run |
-| Training (`lite`, high ISO) | +6.1 dB over a 29.3 dB input in 30 epochs on CPU |
+| ノイズ合成 | 3モデルすべてで、あらゆる信号レベルにおいて `Var = a·x + b` を6%以内で再現 |
+| キャリブレーション(バイアス+フラット) | `a` を0.5%、`b` を6%、バンディングを4%の誤差で復元 |
+| ブラインド推定 | 10%グレーでのシグマが約15%以内、わずかに高めにバイアス(安全な方向) |
+| VST(分散安定化変換) | 信号レベルが3桁変化してもノイズシグマを1.00に保つ |
+| 不偏GAT逆変換 | 代数的な逆変換よりバイアスが約15分の1 |
+| Malvarデモザイク | 実写でbilinearより+3.8dB。定数画像・線形グラデーションでは完全一致 |
+| タイル推論 | オーバーラップ16以上でタイル境界に段差なし |
+| DNG書き出し | librawを通した往復で画素完全一致。カラーマトリクスも反映される |
+| 学習 | 小型モデルがCPU上3分の実行で、入力に対して+2.6dB改善 |
+| 学習(`lite`、高ISO相当) | CPU上30エポックで、29.3dBの入力から+6.1dB改善 |
 
-Reference points from the literature, on the SIDD benchmark (sRGB), for a sense
-of what trained models are worth:
+学習済みモデルがどの程度の性能を持ちうるかの参考として、文献にあるSIDDベンチマーク(sRGB)の数値:
 
-| Model | Params | SIDD PSNR |
+| モデル | パラメータ数 | SIDD PSNR |
 |---|---:|---:|
-| BM3D (no training) | – | 25.65 dB |
+| BM3D(学習なし) | – | 25.65 dB |
 | MIRNet | 31.8 M | 39.72 dB |
 | Uformer-B | 50.9 M | 39.89 dB |
 | Restormer | 26.1 M | 40.02 dB |
 | NAFNet-width64 | 116 M | 40.30 dB |
 
-### Tested against real camera files
+### 実カメラのファイルでのテスト
 
-Genuine CR2/NEF captures (Canon EOS 5D Mark II at ISO 3200 f/1.2, Nikon D3S at
-ISO 3200 f/1.4 — sourced from rawpy's public test fixtures, not synthetic), run
-through the classical (BM3D-under-VST / wavelet) path with no trained weights:
+実際に撮影されたCR2/NEFファイル(Canon EOS 5D Mark II、ISO 3200・f/1.2、および Nikon D3S、ISO 3200・f/1.4——rawpyの公開テスト用サンプルから取得したもので、合成データではない)を、学習済み重みなしの古典手法(分散安定化変換下のBM3D/wavelet)で処理した結果:
 
-| File | Backend | Time | Noise reduction* |
+| ファイル | バックエンド | 処理時間 | ノイズ低減* |
 |---|---|---:|---:|
-| 5D Mark II, 5634×3752 | wavelet | 5.9 s | 33.7 dB |
-| 5D Mark II, 5634×3752 | bm3d | 5m18s | 31.7 dB |
-| D3S, 4284×2844 | wavelet | 3.7 s | 26.5 dB |
+| 5D Mark II, 5634×3752 | wavelet | 5.9秒 | 33.7 dB |
+| 5D Mark II, 5634×3752 | bm3d | 5分18秒 | 31.7 dB |
+| D3S, 4284×2844 | wavelet | 3.7秒 | 26.5 dB |
 
-\*Measured on matched flat-scene blocks selected from the *noisy* input only
-(`paired_noise_reduction`), not independently from each image — see the note
-below on why that distinction matters. No ground truth exists for a real
-photograph, so this is the best available proxy, not a PSNR.
+\*ノイズのある入力画像*だけ*から選んだ、対応する平坦シーンのブロックで測定(`paired_noise_reduction`)。前後の画像それぞれで独立に選んではいない——なぜこの違いが重要なのかは下記参照。実写真には正解画像が存在しないため、これはPSNRの代わりに使える最善の指標であり、PSNRそのものではない。
 
-**A number this large deserved scrutiny before being written down.** An
-earlier version of this metric selected each image's "flattest" blocks
-*independently*; on a real photo that lets an over-smoothed, texture-destroyed
-region in the output masquerade as evidence of noise removal it never
-performed elsewhere. Verifying it required checking three separate things: an
-independent high-pass measurement on hand-picked patches (agreed, ~99% noise
-variance removed even in a textured road patch — the earlier concern that this
-was "too good" turned out to conflate real low-frequency scene structure with
-actual per-pixel noise, which a naive raw-patch standard deviation cannot tell
-apart); a constructed adversarial case that *does* fool the independent-
-selection method (65.7 dB reported for zero real improvement) to confirm the
-failure mode is real; and only then confirming that this particular photo's
-number holds up under the corrected, pairwise measurement (33.65 dB vs the
-original 33.6 dB — it wasn't, in fact, what was fooling the metric here). Both
-the fix and the adversarial regression test are in `tests/test_pipeline.py`.
-What the large dB figure does *not* establish is whether fine real texture
-(gravel-scale detail in the road, for instance) survived alongside the noise —
-that needs a clean reference this photo doesn't have, so treat it as unverified
-rather than assume it's fine.
+**これほど大きな数値は、書き留める前に疑ってかかる価値があった。** この指標の初期バージョンは、各画像の「最も平坦な」ブロックを*独立に*選んでいた。実写真では、出力側で過剰に平滑化されテクスチャが破壊された領域が、実際には起きていないノイズ除去の「証拠」として選ばれてしまうことがある。これを検証するには3つの別々の確認が必要だった: まず、手動で選んだパッチに対する独立の高域通過測定(テクスチャのある路面パッチでもノイズ分散の約99%が実際に除去されていることを確認——当初「良すぎる」と疑った点は、本物の低周波シーン構造と実際の画素単位ノイズを混同していた、単純な生パッチ標準偏差測定の限界だったと判明した)。次に、独立選択方式を実際に騙せる敵対的なケースを意図的に構築し(改善が全く無いのに65.7dBと報告される)、この失敗モードが本当に存在することを確認した。そして最後に、この特定の写真の数値が修正後の対応ブロック方式でも保たれることを確認した(修正前33.6dB、修正後33.65dB——つまり今回はこの指標を騙していた原因ではなかった)。修正と、この敵対的ケースを再現する回帰テストの両方が `tests/test_pipeline.py` にある。この大きなdB値が示していない点として、路面の砂利程度の本物の微細テクスチャがノイズと一緒に失われていないかどうかがある——それには正解画像が必要だが、この写真にはそれが無いため、大丈夫だと決めつけず未検証として扱っている。
 
-**No pre-trained weights ship with this repository.** The classical path runs
-out of the box; the network path needs you to train or supply a checkpoint, and
-`--method model` fails loudly rather than quietly returning an untrained
-network's output.
+**このリポジトリに学習済み重みは同梱していない。** 古典手法の経路はそのまま動くが、ネットワークの経路は学習させるかチェックポイントを用意する必要があり、`--method model` は未学習ネットワークの出力を黙って返すのではなく、はっきりとエラーで失敗する。
 
 ---
 
-## Honest limitations
+## 正直な制限事項
 
-- **Canon sRAW/mRAW modes are not supported and crash.** These modes have the
-  camera do partial demosaicing in hardware, so `raw_image_visible` comes back
-  as an already-multi-channel `(H, W, N)` array instead of a 2-D mosaic, which
-  nothing downstream expects. Found by testing against a real Canon 40D sRAW
-  file; full-resolution RAW (CR2/CR3/NEF/ARW/...) from the same bodies works
-  normally. Shoot full-resolution RAW if your camera offers a choice.
-- **X-Trans and Quad-Bayer** sensors fall back to single-plane processing.
-  Correct, but it forfeits the colour-consistency advantage of packing, so
-  expect less from Fujifilm files.
-- **Blind noise estimation degrades on frames textured at fine scale
-  everywhere** — dense foliage, fabric, gravel filling the frame. A high-pass
-  filter cannot distinguish near-Nyquist detail from noise, so the estimate
-  biases towards over-smoothing. Calibrate if this matters to you.
-- **The bundled BM3D is 0.7–1.1 dB behind the reference `bm3d` package** and
-  roughly ten times slower, because the reference is compiled and uses a
-  bi-orthogonal wavelet in its first pass. Install `bm3d` and it will be
-  preferred automatically; the measurements are in the module docstring.
-- **EXIF is not carried into the output DNG.** The sensor data, CFA pattern,
-  black and white levels, white balance and colour matrix all survive; shooting
-  metadata does not. Copy it across with `exiftool` if you need it.
-- **Values below 0 ADU cannot be stored** in an unsigned RAW container. This
-  never arises on a real capture, where the black level leaves ample headroom,
-  but the writers warn rather than clipping silently.
-- **`--strength` above ~2 will visibly plasticise skin and foliage.** It is a
-  real change to the assumed noise level, not a cosmetic blend.
-- **Short training runs on nearly-clean data can end up as no-ops.** A residual
-  network starts as the identity, and if there is little noise to remove and few
-  steps to learn from, it stays there — the checkpoint loads fine and then
-  reports 0.0 dB. `denoiseraw train` now warns explicitly when a finished run
-  never beat its own noisy input, but the fix is more data, more steps, or
-  training at the ISO you actually shoot.
+- **CanonのsRAW/mRAWモードは非対応でクラッシュする。** これらのモードはカメラ内でハードウェア的に部分デモザイクを行うため、`raw_image_visible` は2次元モザイクではなく、既に多チャンネル化された `(H, W, N)` の配列として返ってくる。これは以降の処理のどこも想定していない。実際のCanon 40D sRAWファイルでテストして見つかった。同じ機種でも通常解像度のRAW(CR2/CR3/NEF/ARW等)は問題なく動く。カメラで選べるなら通常解像度のRAWで撮影すること。
+- **X-TransやQuad-Bayer**センサーは単一プレーン処理にフォールバックする。動作は正しいが、パッキングによる色の一貫性という利点を失うため、富士フイルムのファイルでは期待値を下げてほしい。
+- **ブラインドノイズ推定は、フレーム全体が細かいテクスチャで埋め尽くされている場合に精度が落ちる**——密集した葉、布地、フレーム全体を覆う砂利など。高域通過フィルタではナイキスト周波数近くの本物のディテールとノイズを区別できず、推定値は過剰平滑化の方向にバイアスする。これが問題になるならキャリブレーションすること。
+- **同梱のBM3Dは、参照実装の`bm3d`パッケージより0.7〜1.1dB劣り**、約10倍遅い。参照実装はコンパイル済みで、最初のパスに双直交ウェーブレットを使っているため。`bm3d`をインストールすれば自動的にそちらが優先される。詳しい測定値はモジュールのdocstringにある。
+- **EXIFは出力DNGに引き継がれない。** センサーデータ、CFAパターン、黒/白レベル、ホワイトバランス、カラーマトリクスはすべて保持されるが、撮影情報(メタデータ)は保持されない。必要なら`exiftool`でコピーすること。
+- **0 ADU未満の値は符号なしのRAWコンテナに保存できない。** 実際の撮影では黒レベルに十分な余裕があるため通常発生しないが、書き込み側は黙ってクリップするのではなく警告を出す。
+- **`--strength`を約2以上にすると、肌や葉が目に見えてのっぺりする。** これは見た目のブレンドではなく、想定するノイズレベルへの本当の変更である。
+- **ほぼノイズの無いデータでの短時間学習は、何もしないモデルになりかねない。** 残差ネットワークは恒等関数として初期化されるため、除去すべきノイズが少なく学習ステップも少ないと、そのまま何もしない状態に留まる——チェックポイントは正常に読み込め、しかし0.0dBという結果になる。`denoiseraw train`は、学習を終えたモデルが元のノイズ入力を一度も上回れなかった場合に明示的に警告するようになったが、根本的な対処はデータを増やす・ステップ数を増やす・実際に撮影するISOで学習させることである。
 
 ---
 
-## Development
+## 開発
 
 ```bash
 pip install -e ".[dev]"
-pytest                       # ~190 tests, about 30 seconds
-pytest -m slow               # plus a real (short) training run
+pytest                       # 約190個のテスト、30秒程度
+pytest -m slow               # それに加えて、実際の(短い)学習を1回実行
 ```
 
-The test suite manufactures synthetic camera files — a scene with realistic
-frequency content, mosaicked, corrupted with the physics model, written as a
-DNG that libraw opens exactly like a camera's own file — so everything is
-tested end to end without shipping a 30 MB sample.
+テストスイートは合成カメラファイルを自作している——現実的な周波数特性を持つシーンをモザイク化し、物理モデルでノイズを加え、librawが実カメラのファイルと同じように開けるDNGとして書き出す——ので、30MBのサンプルを同梱しなくてもすべてエンドツーエンドでテストできる。
 
-## Licence
+## ライセンス
 
-MIT.
+MIT。
