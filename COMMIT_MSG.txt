@@ -1,0 +1,42 @@
+Physics-aware RAW denoising for DSLR and mirrorless cameras
+
+Implements a complete RAW denoising application that works on the Bayer mosaic
+before demosaicing, where sensor noise still obeys a measurable two-parameter
+law, rather than after the raw converter has correlated it beyond modelling.
+
+Noise modelling (denoiseraw/noise/)
+  Full ELD formulation (Wei et al., CVPR 2020): Poisson shot noise,
+  Tukey-lambda read noise, per-row banding, quantisation. Calibration from
+  bias and flat-field frames, and blind single-image estimation following
+  Foi et al. (TIP 2008) for when no calibration exists.
+
+Networks (denoiseraw/models/)
+  NAFNet (ECCV 2022) and Restormer (CVPR 2022), with parameter counts asserted
+  against the published configurations, plus a separable-convolution U-Net for
+  CPU use. Per-pixel noise conditioning (FFDNet/CBDNet style) so one model
+  covers every ISO.
+
+Training (denoiseraw/engine/, denoiseraw/data/)
+  Synthetic pairs from clean RAW files with noise resampled each epoch, real
+  paired data, Charbonnier/PSNR/frequency/shadow losses, EMA, cosine schedule,
+  and Neighbor2Neighbor (CVPR 2021) self-supervised fine-tuning so a model can
+  adapt to a specific body with no clean reference.
+
+Classical path (denoiseraw/classical/, denoiseraw/vst.py)
+  Self-contained BM3D under a generalised Anscombe transform with the
+  closed-form unbiased inverse, so the tool produces a good result on first
+  run with no weights and no GPU.
+
+I/O (denoiseraw/rawio/)
+  libraw loading, CFA packing, Malvar demosaic, dcraw-compatible colour
+  handling, and pixel-exact linear DNG export that raw converters open
+  directly.
+
+Two details handled carefully because they fail silently otherwise: row noise
+is applied so packed planes sharing a physical sensor row share the offset, and
+the D4 self-ensemble permutes colour planes as well as flipping pixels.
+
+188 tests covering statistical correctness of the noise model, calibration
+accuracy, VST behaviour, architecture fidelity, seam-free tiling, DNG
+round-tripping through libraw, and a real training run that gains PSNR.
+Measured limitations are documented in README.md rather than smoothed over.

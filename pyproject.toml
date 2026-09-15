@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "denoiseraw"
+version = "0.1.0"
+description = "Physics-aware RAW denoising for DSLR / mirrorless cameras"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = [
+    "numpy>=1.23",
+    "scipy>=1.9",
+    "rawpy>=0.18",
+    "imageio>=2.25",
+    "tifffile>=2023.1",
+    "pillow>=9.0",
+    "scikit-image>=0.20",
+    "tqdm>=4.64",
+]
+
+[project.optional-dependencies]
+torch = ["torch>=2.0"]
+dev = ["pytest>=7.0", "ruff>=0.1"]
+
+[project.scripts]
+denoiseraw = "denoiseraw.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["denoiseraw*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+markers = ["slow: takes more than a few seconds"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "C4", "RUF", "PLR0402"]
+# typing.Optional / typing.List are kept deliberately: the package supports
+# Python 3.9, where the PEP 585/604 spellings are not available at runtime
+# outside annotations.
+# C408: dict(a=1) reads better than a literal for keyword bundles passed with **.
+# RUF005: explicit tuple concatenation is clearer than unpacking for shape maths.
+ignore = ["E501", "RUF012", "C408", "RUF005"]

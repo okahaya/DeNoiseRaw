@@ -1,0 +1,16 @@
+{
+  "_comment": "High-ISO / low-light focus: heavier shadow weighting and a gain range skewed high.",
+  "preset": "restormer",
+  "conditioning": "sigma_map",
+  "epochs": 250,
+  "batch_size": 8,
+  "patch_size": 192,
+  "patches_per_image": 64,
+  "lr": 0.0003,
+  "warmup_steps": 3000,
+  "ema_decay": 0.999,
+  "noise_model": "eld",
+  "iso_min": 1600,
+  "iso_max": 102400,
+  "loss_weights": {"charbonnier": 1.0, "shadow": 1.0, "frequency": 0.05}
+}

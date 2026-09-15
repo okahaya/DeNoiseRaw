@@ -1,0 +1,17 @@
+{
+  "_comment": "Default recipe: pre-train on synthetic ELD noise over a wide ISO range.",
+  "preset": "nafnet",
+  "conditioning": "sigma_map",
+  "epochs": 200,
+  "batch_size": 16,
+  "patch_size": 256,
+  "patches_per_image": 64,
+  "lr": 0.001,
+  "min_lr": 1e-06,
+  "warmup_steps": 2000,
+  "ema_decay": 0.999,
+  "noise_model": "eld",
+  "iso_min": 100,
+  "iso_max": 25600,
+  "loss_weights": {"charbonnier": 1.0, "psnr": 0.0, "frequency": 0.05, "shadow": 0.5}
+}
