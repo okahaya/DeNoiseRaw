@@ -200,4 +200,8 @@ the module docstring.
   the output over the eight flips and rotations for 0.1–0.3 dB, free at
   training time. On packed Bayer this requires permuting the colour planes as
   well as flipping pixels; see `denoiseraw/engine/geometry.py`.
-- **EMA of weights** — consistently 0.1–0.2 dB, costs nothing.
+- **EMA of weights** — consistently 0.1–0.2 dB, costs nothing. The decay is
+  ramped in (as TensorFlow's `ExponentialMovingAverage` and timm both do):
+  with a fixed 0.999 and a residual model initialised to the identity, a short
+  run's average never leaves its starting point and the saved checkpoint
+  denoises nothing at all.

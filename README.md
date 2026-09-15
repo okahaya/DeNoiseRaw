@@ -237,7 +237,8 @@ From the test suite, on synthetic captures with a known profile:
 | Malvar demosaic | +3.8 dB over bilinear on real content; exact on constant and linear ramps |
 | Tiled inference | no step discontinuity at tile boundaries for overlap ≥ 16 |
 | DNG export | pixel-exact round trip through libraw; colour matrix honoured |
-| Training | a 3-minute CPU run on a tiny model gains +2.6 dB over the noisy input |
+| Training | a small model gains +2.6 dB over the noisy input in a 3-minute CPU run |
+| Training (`lite`, high ISO) | +6.1 dB over a 29.3 dB input in 30 epochs on CPU |
 
 Reference points from the literature, on the SIDD benchmark (sRGB), for a sense
 of what trained models are worth:
@@ -278,6 +279,12 @@ network's output.
   but the writers warn rather than clipping silently.
 - **`--strength` above ~2 will visibly plasticise skin and foliage.** It is a
   real change to the assumed noise level, not a cosmetic blend.
+- **Short training runs on nearly-clean data can end up as no-ops.** A residual
+  network starts as the identity, and if there is little noise to remove and few
+  steps to learn from, it stays there — the checkpoint loads fine and then
+  reports 0.0 dB. `denoiseraw train` now warns explicitly when a finished run
+  never beat its own noisy input, but the fix is more data, more steps, or
+  training at the ISO you actually shoot.
 
 ---
 

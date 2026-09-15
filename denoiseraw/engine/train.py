@@ -17,8 +17,9 @@ import json
 import math
 import os
 import time
+import warnings
 from dataclasses import asdict, dataclass, field
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 from torch.utils.data import DataLoader
@@ -37,6 +38,7 @@ class TrainConfig:
     patch_size: int = 128
     lr: float = 1e-3
     min_lr: float = 1e-6
+    betas: Tuple[float, float] = (0.9, 0.999)
     weight_decay: float = 0.0
     warmup_steps: int = 500
     grad_clip: float = 1.0
@@ -158,8 +160,13 @@ def train(
                                 num_workers=min(cfg.num_workers, 2))
 
     criterion = CombinedLoss(**cfg.loss_weights).to(device)
+    # NAFNet trains with betas=(0.9, 0.9). That low beta2 makes Adam very
+    # responsive to recent gradients, which needs a carefully tuned learning
+    # rate; at a general-purpose default it can leave a residual model
+    # oscillating around its identity initialisation and never converging.
+    # (0.9, 0.999) is the robust choice; set cfg.betas to reproduce the paper.
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay,
-                                  betas=(0.9, 0.9))
+                                  betas=tuple(cfg.betas))
     use_amp = cfg.amp and device.type == "cuda"
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
     ema = EMA(model, cfg.ema_decay) if cfg.ema_decay > 0 else None
@@ -176,6 +183,7 @@ def train(
     step = 0
     best_psnr = -float("inf")
     start_epoch = 0
+    history: list = []
 
     if resume and os.path.exists(resume):
         payload = torch.load(resume, map_location=device, weights_only=False)
@@ -242,6 +250,7 @@ def train(
                 ema.restore(model, backup)
             log({"epoch": epoch, "step": step, "val": metrics})
 
+            history.append(metrics)
             if metrics["psnr"] > best_psnr:
                 best_psnr = metrics["psnr"]
                 backup = ema.copy_to(model) if ema is not None else None
@@ -255,4 +264,27 @@ def train(
                         ema=(ema.shadow if ema is not None else None),
                         ema_step=(ema.step if ema is not None else 0))
 
+    _warn_if_no_better_than_doing_nothing(history)
     return best_path if os.path.exists(best_path) else last_path
+
+
+def _warn_if_no_better_than_doing_nothing(history) -> None:
+    """Shout if the finished model does not beat leaving the image alone.
+
+    A residual network starts as the identity, so a run that fails to converge
+    produces a checkpoint that returns its input unchanged. That is easy to miss
+    -- the run exits cleanly, the loss looks small, and the checkpoint loads --
+    and the first sign is a denoise that reports 0.0 dB. Checking here turns a
+    silent non-result into an explicit one.
+    """
+    if not history:
+        return
+    best = max(history, key=lambda m: m["psnr"])
+    if not (best["psnr"] > best["psnr_input"] + 0.05):
+        warnings.warn(
+            f"training finished without beating the noisy input "
+            f"({best['psnr']:.2f} dB vs {best['psnr_input']:.2f} dB): this checkpoint is "
+            "effectively a no-op. The usual causes are a learning rate too high for the "
+            "model size (try --lr 2e-4), too few steps, or too little training data.",
+            RuntimeWarning, stacklevel=2,
+        )
