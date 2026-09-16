@@ -1,5 +1,7 @@
 # DeNoiseRaw
 
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/okahaya/DeNoiseRaw/blob/claude/dslr-noise-reduction-app-5rawrf/notebooks/DeNoiseRaw_Colab.ipynb)
+
 DSLR・ミラーレスカメラのRAWファイル向けノイズ除去ツール。センサーが実際にどうノイズを生むか、その物理法則に基づいて作られている。
 
 Bayerモザイク(デモザイク前)の段階で処理し、ノイズを勝手に推測するのではなく物理モデルとして扱う: 光子ショットノイズ、裾の重い読み出しノイズ、行バンディング、量子化ノイズ——これらをカメラごとにキャリブレーションする。結果はLightroom・Capture One・darktableで仕上げられる線形DNGとして出力される。
@@ -11,6 +13,20 @@ denoiseraw denoise IMG_1234.CR2 -o IMG_1234_denoised.dng
 ```
 
 これだけで、学習済みモデルもGPUも無しにすぐ動く。あと数dB欲しくなったらネットワークを学習させればよい。
+
+---
+
+## インストールせずに試す(Google Colab)
+
+自分のPCに何も入れずに、ブラウザだけでRAWファイルをアップロード→ノイズ除去→ダウンロードまで完結する。上の "Open in Colab" バッジを押すだけ。
+
+なお、GitHub Pagesでは本アプリは動かせない(Pagesは静的サイト配信のみで、Pythonをサーバー側で実行する仕組みが無いため)。Colabなら本物のPython実行環境(無料GPU付き)がブラウザから使えるので、こちらが実質的な代替手段になる。ノートブック内で `denoiseraw gui --share` を実行すれば、スマホのブラウザからも開ける一時的な公開リンクも作れる。
+
+[`notebooks/DeNoiseRaw_Colab.ipynb`](notebooks/DeNoiseRaw_Colab.ipynb) の中身は、実際に手元でColab相当の環境(クリーンな仮想環境 + `jupyter nbconvert --execute`)を作って全セルを自動実行し、動作を確認済み。
+
+処理結果の例(rawpyの公開テストデータに含まれる、ISSから撮影されたオーロラの実写真、ISO3200、Nikon D3S):
+
+![Colabノートブックでの実行結果例](docs/images/colab_aurora_preview.png)
 
 ---
 
@@ -250,9 +266,9 @@ denoiseraw/
 
 | ファイル | バックエンド | 処理時間 | ノイズ低減* |
 |---|---|---:|---:|
-| 5D Mark II, 5634×3752 | wavelet | 5.9秒 | 33.7 dB |
-| 5D Mark II, 5634×3752 | bm3d | 5分18秒 | 31.7 dB |
-| D3S, 4284×2844 | wavelet | 3.7秒 | 26.5 dB |
+| 5D Mark II, 5634×3752 | wavelet | 7.5秒 | 37.5 dB |
+| 5D Mark II, 5634×3752 | bm3d | 6分54秒 | 33.7 dB |
+| D3S, 4284×2844 | wavelet | 4.7秒 | 31.5 dB |
 
 \*ノイズのある入力画像*だけ*から選んだ、対応する平坦シーンのブロックで測定(`paired_noise_reduction`)。前後の画像それぞれで独立に選んではいない——なぜこの違いが重要なのかは下記参照。実写真には正解画像が存在しないため、これはPSNRの代わりに使える最善の指標であり、PSNRそのものではない。
 
